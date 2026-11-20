@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 import requests
 
 KEY_ID = os.environ.get("ALPACA_KEY_ID", "").strip()
@@ -7,16 +8,46 @@ SECRET = os.environ.get("ALPACA_SECRET_KEY", "").strip()
 
 headers = {"APCA-API-KEY-ID": KEY_ID, "APCA-API-SECRET-KEY": SECRET}
 
+start = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
 url = "https://data.alpaca.markets/v1beta3/crypto/us/bars"
-params = {"symbols": "BTC/USD", "timeframe": "1Hour", "limit": 100}
 
-r = requests.get(url, headers=headers, params=params)
-print(f"Bars status code: {r.status_code}")
-if r.status_code != 200:
-    print(r.text[:300])
+bars = []
+page_token = None
+first_page = True
+
+while True:
+    params = {
+        "symbols": "BTC/USD",
+        "timeframe": "1Hour",
+        "start": start,
+        "limit": 1000,
+        "sort": "asc",
+    }
+    if page_token:
+        params["page_token"] = page_token
+
+    r = requests.get(url, headers=headers, params=params)
+    print(f"Bars status code: {r.status_code}")
+    if r.status_code != 200:
+        print(r.text[:300])
+        sys.exit(1)
+
+    data = r.json()
+    if first_page:
+        print(f"Raw response start: {r.text[:300]}")
+        first_page = False
+
+    bars.extend(data.get("bars", {}).get("BTC/USD", []))
+    page_token = data.get("next_page_token")
+    if not page_token:
+        break
+
+print(f"Bars received: {len(bars)}")
+
+if len(bars) < 51:
+    print("Not enough history for the 50-hour average. Stopping.")
     sys.exit(1)
 
-bars = r.json()["bars"]["BTC/USD"]
 closes = [b["c"] for b in bars]
 volumes = [b["v"] for b in bars]
 
@@ -50,7 +81,6 @@ avg_vol20 = sum(volumes[-20:]) / 20
 last_vol = volumes[-1]
 last_close = closes[-1]
 
-print(f"Bars received: {len(bars)}")
 print(f"Latest close: ${last_close:,.2f}")
 print(f"20-hour EMA: ${ema20:,.2f}")
 print(f"50-hour EMA: ${ema50:,.2f}")
