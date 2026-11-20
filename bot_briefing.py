@@ -1,16 +1,20 @@
 import os
 import sys
+import json
+import re
 from datetime import datetime, timedelta, timezone
 import requests
 
 KEY_ID = os.environ.get("ALPACA_KEY_ID", "").strip()
 SECRET = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 headers = {"APCA-API-KEY-ID": KEY_ID, "APCA-API-SECRET-KEY": SECRET}
 
 PAPER_URL = "https://paper-api.alpaca.markets"
 DATA_URL = "https://data.alpaca.markets"
 STOCKS = ["NVDA", "TSLA", "AMZN", "GOOGL", "MSTR", "PLTR", "AMD", "SOFI", "NFLX", "SPY"]
 CRYPTO = ["BTC/USD"]
+ALLOWED = STOCKS + CRYPTO
 
 # Testing switch: shows stock data even when the market is closed.
 # Set to False before the bot goes live.
@@ -96,14 +100,13 @@ positions = get_json(f"{PAPER_URL}/v2/positions", headers=headers)
 
 fng = get_json("https://api.alternative.me/fng/?limit=1")["data"][0]
 
-watch = STOCKS if (market_open or FORCE_STOCKS) else []
-watch = watch + CRYPTO
-stock_bars = fetch_bars(watch[:-1], 60, crypto=False) if watch[:-1] else {}
+watch = (STOCKS if (market_open or FORCE_STOCKS) else []) + CRYPTO
+stock_watch = [s for s in watch if s not in CRYPTO]
+stock_bars = fetch_bars(stock_watch, 60, crypto=False) if stock_watch else {}
 crypto_bars = fetch_bars(CRYPTO, 60, crypto=True)
 
-news_symbols = ",".join(watch)
 news = get_json(f"{DATA_URL}/v1beta1/news", headers=headers,
-                params={"symbols": news_symbols, "limit": 50, "sort": "desc"}).get("news", [])
+                params={"symbols": ",".join(watch), "limit": 50, "sort": "desc"}).get("news", [])
 
 # ---------- Print the briefing ----------
 
@@ -140,11 +143,6 @@ for asset in watch:
         print(f"  - {n['headline']}")
 
 # ---------- Ask Claude for a decision (no trades placed) ----------
-import json
-import re
-
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-ALLOWED = STOCKS + CRYPTO
 
 lines = [
     f"Stock market open: {market_open}",
@@ -192,76 +190,7 @@ if r.status_code != 200:
     print(f"Claude error {r.status_code}: {r.text[:300]}")
     sys.exit(1)
 
-["text"]raw = "".join(block.get("text", "") for block in r.json()["content"] if block.get("type") == "text")
-cleaned = re.sub(r"```json|```", "", raw).strip()
-try:
-    decision = json.loads(cleaned)
-except json.JSONDecodeError:
-    print("Claude did not return valid JSON. Raw reply:")
-    print(raw)
-    sys.exit(1)
-
-action = decision.get("action")
-symbol = decision.get("symbol")
-if action not in ("buy", "hold") or (action == "buy" and symbol not in ALLOWED):
-    print("Decision rejected by safety check:")
-    print(decision)
-    sys.exit(1)
-
-# ---------- Ask Claude for a decision (no trades placed) ----------
-import json
-import re
-
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-ALLOWED = STOCKS + CRYPTO
-
-lines = [
-    f"Stock market open: {market_open}",
-    f"Cash: ${float(account['cash']):,.2f}",
-    f"Portfolio value: ${float(account['portfolio_value']):,.2f}",
-    f"Open positions: {len(positions)}",
-]
-for p in positions:
-    lines.append(f"  {p['symbol']} qty {p['qty']} avg entry ${float(p['avg_entry_price']):,.2f} P/L {float(p['unrealized_plpc']) * 100:.2f}%")
-lines.append(f"Crypto Fear & Greed: {fng['value']} ({fng['value_classification']})")
-for sym in CRYPTO:
-    lines.append(trend_line(sym, crypto_bars[sym]))
-for sym in STOCKS:
-    if sym in stock_bars:
-        lines.append(trend_line(sym, stock_bars[sym]))
-for asset in watch:
-    base = asset.split("/")[0]
-    matches = [n for n in news if asset in n.get("symbols", []) or base in n.get("symbols", [])][:2]
-    for n in matches:
-        lines.append(f"News {asset}: {n['headline']}")
-briefing_text = "\n".join(lines)
-
-instructions = """You are a cautious trading assistant for a paper-trading account.
-Allowed assets: NVDA, TSLA, AMZN, GOOGL, MSTR, PLTR, AMD, SOFI, NFLX, SPY, BTC/USD.
-Pick AT MOST ONE trade, or hold. Hold unless several signals clearly align.
-Only consider a buy when the price is above both the 20 and 50 EMA on both the 1H and 4H charts, RSI supports it, and volume is above average.
-Reply with ONLY a JSON object, no other text, in this exact format:
-{"action": "buy" or "hold", "symbol": "one allowed asset or null", "reasoning": "two to four plain sentences"}"""
-
-r = requests.post(
-    "https://api.anthropic.com/v1/messages",
-    headers={
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    },
-    json={
-        "model": "claude-haiku-5-5",
-        "max_tokens": 400,
-        "system": instructions,
-        "messages": [{"role": "user", "content": briefing_text}],
-    },
-)
-if r.status_code != 200:
-    print(f"Claude error {r.status_code}: {r.text[:300]}")
-    sys.exit(1)
-
-raw = r.json()["content"][0]["text"]
+raw = "".join(block.get("text", "") for block in r.json()["content"] if block.get("type") == "text")
 cleaned = re.sub(r"```json|```", "", raw).strip()
 try:
     decision = json.loads(cleaned)
