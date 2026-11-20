@@ -138,3 +138,147 @@ for asset in watch:
         print("  (no recent headlines)")
     for n in matches:
         print(f"  - {n['headline']}")
+
+# ---------- Ask Claude for a decision (no trades placed) ----------
+import json
+import re
+
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+ALLOWED = STOCKS + CRYPTO
+
+lines = [
+    f"Stock market open: {market_open}",
+    f"Cash: ${float(account['cash']):,.2f}",
+    f"Portfolio value: ${float(account['portfolio_value']):,.2f}",
+    f"Open positions: {len(positions)}",
+]
+for p in positions:
+    lines.append(f"  {p['symbol']} qty {p['qty']} avg entry ${float(p['avg_entry_price']):,.2f} P/L {float(p['unrealized_plpc']) * 100:.2f}%")
+lines.append(f"Crypto Fear & Greed: {fng['value']} ({fng['value_classification']})")
+for sym in CRYPTO:
+    lines.append(trend_line(sym, crypto_bars[sym]))
+for sym in STOCKS:
+    if sym in stock_bars:
+        lines.append(trend_line(sym, stock_bars[sym]))
+for asset in watch:
+    base = asset.split("/")[0]
+    matches = [n for n in news if asset in n.get("symbols", []) or base in n.get("symbols", [])][:2]
+    for n in matches:
+        lines.append(f"News {asset}: {n['headline']}")
+briefing_text = "\n".join(lines)
+
+instructions = """You are a cautious trading assistant for a paper-trading account.
+Allowed assets: NVDA, TSLA, AMZN, GOOGL, MSTR, PLTR, AMD, SOFI, NFLX, SPY, BTC/USD.
+Pick AT MOST ONE trade, or hold. Hold unless several signals clearly align.
+Only consider a buy when the price is above both the 20 and 50 EMA on both the 1H and 4H charts, RSI supports it, and volume is above average.
+Reply with ONLY a JSON object, no other text, in this exact format:
+{"action": "buy" or "hold", "symbol": "one allowed asset or null", "reasoning": "two to four plain sentences"}"""
+
+r = requests.post(
+    "https://api.anthropic.com/v1/messages",
+    headers={
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    },
+    json={
+        "model": "claude-haiku-5-5",
+        "max_tokens": 400,
+        "system": instructions,
+        "messages": [{"role": "user", "content": briefing_text}],
+    },
+)
+if r.status_code != 200:
+    print(f"Claude error {r.status_code}: {r.text[:300]}")
+    sys.exit(1)
+
+raw = r.json()["content"][0]["text"]
+cleaned = re.sub(r"```json|```", "", raw).strip()
+try:
+    decision = json.loads(cleaned)
+except json.JSONDecodeError:
+    print("Claude did not return valid JSON. Raw reply:")
+    print(raw)
+    sys.exit(1)
+
+action = decision.get("action")
+symbol = decision.get("symbol")
+if action not in ("buy", "hold") or (action == "buy" and symbol not in ALLOWED):
+    print("Decision rejected by safety check:")
+    print(decision)
+    sys.exit(1)
+
+# ---------- Ask Claude for a decision (no trades placed) ----------
+import json
+import re
+
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+ALLOWED = STOCKS + CRYPTO
+
+lines = [
+    f"Stock market open: {market_open}",
+    f"Cash: ${float(account['cash']):,.2f}",
+    f"Portfolio value: ${float(account['portfolio_value']):,.2f}",
+    f"Open positions: {len(positions)}",
+]
+for p in positions:
+    lines.append(f"  {p['symbol']} qty {p['qty']} avg entry ${float(p['avg_entry_price']):,.2f} P/L {float(p['unrealized_plpc']) * 100:.2f}%")
+lines.append(f"Crypto Fear & Greed: {fng['value']} ({fng['value_classification']})")
+for sym in CRYPTO:
+    lines.append(trend_line(sym, crypto_bars[sym]))
+for sym in STOCKS:
+    if sym in stock_bars:
+        lines.append(trend_line(sym, stock_bars[sym]))
+for asset in watch:
+    base = asset.split("/")[0]
+    matches = [n for n in news if asset in n.get("symbols", []) or base in n.get("symbols", [])][:2]
+    for n in matches:
+        lines.append(f"News {asset}: {n['headline']}")
+briefing_text = "\n".join(lines)
+
+instructions = """You are a cautious trading assistant for a paper-trading account.
+Allowed assets: NVDA, TSLA, AMZN, GOOGL, MSTR, PLTR, AMD, SOFI, NFLX, SPY, BTC/USD.
+Pick AT MOST ONE trade, or hold. Hold unless several signals clearly align.
+Only consider a buy when the price is above both the 20 and 50 EMA on both the 1H and 4H charts, RSI supports it, and volume is above average.
+Reply with ONLY a JSON object, no other text, in this exact format:
+{"action": "buy" or "hold", "symbol": "one allowed asset or null", "reasoning": "two to four plain sentences"}"""
+
+r = requests.post(
+    "https://api.anthropic.com/v1/messages",
+    headers={
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    },
+    json={
+        "model": "claude-haiku-5-5",
+        "max_tokens": 400,
+        "system": instructions,
+        "messages": [{"role": "user", "content": briefing_text}],
+    },
+)
+if r.status_code != 200:
+    print(f"Claude error {r.status_code}: {r.text[:300]}")
+    sys.exit(1)
+
+raw = r.json()["content"][0]["text"]
+cleaned = re.sub(r"```json|```", "", raw).strip()
+try:
+    decision = json.loads(cleaned)
+except json.JSONDecodeError:
+    print("Claude did not return valid JSON. Raw reply:")
+    print(raw)
+    sys.exit(1)
+
+action = decision.get("action")
+symbol = decision.get("symbol")
+if action not in ("buy", "hold") or (action == "buy" and symbol not in ALLOWED):
+    print("Decision rejected by safety check:")
+    print(decision)
+    sys.exit(1)
+
+print("\n=== CLAUDE DECISION ===")
+print(f"Action: {action}")
+print(f"Symbol: {symbol}")
+print(f"Reasoning: {decision.get('reasoning', '')}")
+print("No orders were placed. This is a test run.")
