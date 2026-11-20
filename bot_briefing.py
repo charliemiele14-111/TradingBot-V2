@@ -192,7 +192,7 @@ if r.status_code != 200:
     print(f"Claude error {r.status_code}: {r.text[:300]}")
     sys.exit(1)
 
-raw = r.json()["content"][0]["text"]
+["text"]raw = "".join(block.get("text", "") for block in r.json()["content"] if block.get("type") == "text")
 cleaned = re.sub(r"```json|```", "", raw).strip()
 try:
     decision = json.loads(cleaned)
