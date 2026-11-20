@@ -165,10 +165,12 @@ for asset in watch:
         lines.append(f"News {asset}: {n['headline']}")
 briefing_text = "\n".join(lines)
 
-instructions = """You are a cautious trading assistant for a paper-trading account.
+instructions = """You are an active trading assistant for a paper-trading account. Find good trades rather than defaulting to cash.
 Allowed assets: NVDA, TSLA, AMZN, GOOGL, MSTR, PLTR, AMD, SOFI, NFLX, SPY, BTC/USD.
-Pick AT MOST ONE trade, or hold. Hold unless several signals clearly align.
-Only consider a buy when the price is above both the 20 and 50 EMA on both the 1H and 4H charts, RSI supports it, and volume is above average.
+Pick AT MOST ONE trade per run, or hold if nothing qualifies.
+Buy when the setup qualifies: price above the 20-hour average on the 1H chart, RSI between 40 and 70, and volume above average. The 4H trend being above its 20-hour average is a bonus but not required.
+If several assets qualify, pick the one with the strongest setup.
+The code will automatically add a 2% stop-loss and 4% take-profit to any buy, so you do not need to set them.
 Reply with ONLY a JSON object, no other text, in this exact format:
 {"action": "buy" or "hold", "symbol": "one allowed asset or null", "reasoning": "two to four plain sentences"}"""
 
